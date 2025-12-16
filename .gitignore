@@ -17,16 +17,17 @@ coverage.*
 *.coverprofile
 profile.cov
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
 # Go workspace file
 go.work
 go.work.sum
 
+# Ignore built binaries.
+bin/
+
+# Ignore vs code debug files.
+.vscode/
+__debug*
+.cursor/
+
 # env file
 .env
-
-# Editor/IDE
-# .idea/
-# .vscode/

@@ -1,0 +1,37 @@
+gateway:
+  # Set enabled to false to use Ingress instead of Gateway API
+  enabled: true
+  name: envoy-gateway
+  namespace: default
+
+ingress:
+  className: ""
+
+# If host is not set, it will default to ClusterIP and won't be accessible externally
+host:
+  domain: REPLACE_ME.com
+  prefixes:
+    - oidc
+  exact:
+    - oidc.gateway.dev-neu.corti.app
+
+image:
+  repository: ghcr.io/corti-ai/oidc-discovery-proxy
+  tag: v0.1.0
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+replicas: 2
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 64Mi
+
+podLabels: {}
+
+podAnnotations: {}
