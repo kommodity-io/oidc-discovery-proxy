@@ -1,0 +1,12 @@
+apiVersion: v2
+name: oidc-discovery-proxy
+description: A Helm chart for OIDC Discovery Proxy deployment in Kommodity Cluster
+
+# Application charts are a collection of templates that can be packaged into versioned archives
+# to be deployed.
+type: application
+
+# This is the chart version. This version number should be incremented each time you make changes
+# to the chart and its templates, including the app version.
+# Versions are expected to follow Semantic Versioning (https://semver.org/)
+version: 0.1.0

@@ -1,0 +1,79 @@
+{{- if not .Values.gateway.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Chart.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion | default .Chart.Version }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  rules:
+    {{- if or .Values.host.exact .Values.host.prefixes }}
+    {{- range .Values.host.exact }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /.well-known/openid-configuration
+            pathType: Exact
+            backend:
+              service:
+                name: {{ $.Chart.Name }}
+                port:
+                  number: 80
+          - path: /openid/v1/jwks
+            pathType: Exact
+            backend:
+              service:
+                name: {{ $.Chart.Name }}
+                port:
+                  number: 80
+    {{- end }}
+    {{- range .Values.host.prefixes }}
+    - host: {{ printf "%s.%s" . $.Values.host.domain | quote }}
+      http:
+        paths:
+          - path: /.well-known/openid-configuration
+            pathType: Exact
+            backend:
+              service:
+                name: {{ $.Chart.Name }}
+                port:
+                  number: 80
+          - path: /openid/v1/jwks
+            pathType: Exact
+            backend:
+              service:
+                name: {{ $.Chart.Name }}
+                port:
+                  number: 80
+    {{- end }}
+    {{- else }}
+    - http:
+        paths:
+          - path: /.well-known/openid-configuration
+            pathType: Exact
+            backend:
+              service:
+                name: {{ .Chart.Name }}
+                port:
+                  number: 80
+          - path: /openid/v1/jwks
+            pathType: Exact
+            backend:
+              service:
+                name: {{ .Chart.Name }}
+                port:
+                  number: 80
+    {{- end }}
+{{- end }}
