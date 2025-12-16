@@ -281,6 +281,6 @@ jobs:
           build-args: |
             VERSION="${{ steps.extract_version.outputs.version }}"
           tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ steps.extract_version.outputs.version }}
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}/oidc-discovery-proxy:latest
+            ghcr.io/${{ github.repository }}/oidc-discovery-proxy:${{ steps.extract_version.outputs.version }}
+            ghcr.io/${{ github.repository }}/oidc-discovery-proxy:${{ github.sha }}
