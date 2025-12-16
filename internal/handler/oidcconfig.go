@@ -5,27 +5,29 @@ import (
 )
 
 const (
+	// OpenIDConfigPath is the path for the OpenID Connect configuration endpoint.
 	OpenIDConfigPath = "/.well-known/openid-configuration"
 )
 
-func (h *OIDCDiscoveryProxyHandler) OpenIDConfig(w http.ResponseWriter, r *http.Request) {
-	if !allowMethod(w, r, http.MethodGet, http.MethodHead, http.MethodOptions) {
+// OpenIDConfig handles requests to the OpenID Connect configuration endpoint.
+func (h *OIDCDiscoveryProxyHandler) OpenIDConfig(writer http.ResponseWriter, request *http.Request) {
+	if !allowMethod(writer, request, http.MethodGet, http.MethodHead, http.MethodOptions) {
 		return
 	}
 
-	data, statusCode, err := h.handle(r.Context(), OpenIDConfigPath)
+	data, statusCode, err := h.handle(request.Context(), OpenIDConfigPath)
 	if err != nil {
-		http.Error(w, err.Error(), statusCode)
+		http.Error(writer, err.Error(), statusCode)
 
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(statusCode)
 
-	_, err = w.Write(data)
+	_, err = writer.Write(data)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
 
 		return
 	}

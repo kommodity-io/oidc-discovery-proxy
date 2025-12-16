@@ -6,13 +6,13 @@ import (
 	"strings"
 )
 
-func allowMethod(w http.ResponseWriter, r *http.Request, allowed ...string) bool {
-	if slices.Contains(allowed, r.Method) {
+func allowMethod(writer http.ResponseWriter, request *http.Request, allowed ...string) bool {
+	if slices.Contains(allowed, request.Method) {
 		return true
 	}
 
-	w.Header().Set("Allow", strings.Join(allowed, ", "))
-	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	writer.Header().Set("Allow", strings.Join(allowed, ", "))
+	http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 
 	return false
 }

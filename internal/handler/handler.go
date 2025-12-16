@@ -1,3 +1,4 @@
+// Package handler provides HTTP handlers for OIDC discovery proxy.
 package handler
 
 import (
@@ -15,6 +16,7 @@ import (
 	"k8s.io/client-go/util/homedir"
 )
 
+// OIDCDiscoveryProxyHandler handles OIDC discovery proxy requests.
 type OIDCDiscoveryProxyHandler struct {
 	client *kubernetes.Clientset
 }
@@ -53,7 +55,7 @@ func createKubernetesClient() (*kubernetes.Clientset, error) {
 	if kubeconfig == "" {
 		home := homedir.HomeDir()
 		if home == "" {
-			return nil, fmt.Errorf("failed to resolve kubeconfig: KUBECONFIG not set and home directory not found")
+			return nil, ErrFailedToResolveKubeconfig
 		}
 
 		kubeconfig = path.Join(home, ".kube", "config")
@@ -66,7 +68,12 @@ func createKubernetesClient() (*kubernetes.Clientset, error) {
 			return nil, fmt.Errorf("failed to load local kubeconfig: %w", err)
 		}
 
-		return kubernetes.NewForConfig(config)
+		client, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
+		}
+
+		return client, nil
 	}
 
 	config, err := rest.InClusterConfig()

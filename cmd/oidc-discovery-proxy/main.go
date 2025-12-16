@@ -1,3 +1,4 @@
+// Package main implements the OIDC Discovery Proxy server.
 package main
 
 import (
