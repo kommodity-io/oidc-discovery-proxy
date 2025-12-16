@@ -15,7 +15,7 @@ host:
 
 image:
   repository: ghcr.io/kommodity-io/oidc-discovery-proxy
-  tag: v1.1.1
+  tag: v1.1.0
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
