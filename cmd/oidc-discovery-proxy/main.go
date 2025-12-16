@@ -2,12 +2,17 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/kommodity-io/oidc-discovery-proxy/internal/handler"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -15,12 +20,65 @@ const (
 	defaultPort = "8080"
 )
 
-func main() {
-	var ready atomic.Bool
+var (
+	//nolint:gochecknoglobals
+	ready atomic.Bool
+)
 
-	oidcHandler, err := handler.NewOIDCDiscoveryProxyHandler()
+func main() {
+	triggers := []os.Signal{
+		os.Interrupt,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, triggers...)
+
+	config := zap.NewProductionConfig()
+	config.OutputPaths = []string{"stdout"}
+	config.EncoderConfig.TimeKey = "timestamp"
+	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+
+	logger, _ := config.Build()
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = defaultPort
+	}
+
+	mux, err := getOIDCMux(logger)
 	if err != nil {
-		panic(err)
+		logger.Fatal("Failed to create HTTP mux", zap.Error(err))
+	}
+
+	server := &http.Server{
+		Addr:         ":" + port,
+		Handler:      mux,
+		ReadTimeout:  timeout,
+		WriteTimeout: timeout,
+	}
+
+	go func() {
+		err := server.ListenAndServe()
+		if err != nil {
+			panic(err)
+		}
+	}()
+
+	// Mark the application as ready after successful initialization
+	ready.Store(true)
+
+	logger.Info("OIDC Discovery Proxy started successfully")
+
+	sig := <-signals
+
+	logger.Info("Received signal", zap.String("signal", sig.String()))
+}
+
+func getOIDCMux(logger *zap.Logger) (*http.ServeMux, error) {
+	oidcHandler, err := handler.NewOIDCDiscoveryProxyHandler(logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OIDC handler: %w", err)
 	}
 
 	mux := http.NewServeMux()
@@ -40,23 +98,5 @@ func main() {
 		}
 	})
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = defaultPort
-	}
-
-	server := &http.Server{
-		Addr:         ":" + port,
-		Handler:      mux,
-		ReadTimeout:  timeout,
-		WriteTimeout: timeout,
-	}
-
-	// Mark the application as ready after successful initialization
-	ready.Store(true)
-
-	err = server.ListenAndServe()
-	if err != nil {
-		panic(err)
-	}
+	return mux, nil
 }
