@@ -51,11 +51,11 @@ func main() {
 		WriteTimeout: timeout,
 	}
 
+	// Mark the application as ready after successful initialization
+	ready.Store(true)
+
 	err = server.ListenAndServe()
 	if err != nil {
 		panic(err)
 	}
-
-	// Mark the application as ready after successful initialization
-	ready.Store(true)
 }
