@@ -34,12 +34,10 @@ func main() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, triggers...)
 
-	config := zap.NewProductionConfig()
-	config.OutputPaths = []string{"stdout"}
-	config.EncoderConfig.TimeKey = "timestamp"
-	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-
-	logger, _ := config.Build()
+	logger, err := getLogger()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to build logger: %v", err))
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -99,4 +97,18 @@ func getOIDCMux(logger *zap.Logger) (*http.ServeMux, error) {
 	})
 
 	return mux, nil
+}
+
+func getLogger() (*zap.Logger, error) {
+	config := zap.NewProductionConfig()
+	config.OutputPaths = []string{"stdout"}
+	config.EncoderConfig.TimeKey = "timestamp"
+	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+
+	logger, err := config.Build()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build logger: %w", err)
+	}
+
+	return logger, nil
 }
