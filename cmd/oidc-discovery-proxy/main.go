@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/kommodity-io/oidc-discovery-proxy/internal/handler"
@@ -14,6 +15,8 @@ const (
 )
 
 func main() {
+	var ready atomic.Bool
+
 	oidcHandler, err := handler.NewOIDCDiscoveryProxyHandler()
 	if err != nil {
 		panic(err)
@@ -22,6 +25,19 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc(handler.OpenIDConfigPath, oidcHandler.OpenIDConfig)
 	mux.HandleFunc(handler.JWKSPath, oidcHandler.JWKS)
+	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/readyz", func(writer http.ResponseWriter, _ *http.Request) {
+		if ready.Load() {
+			writer.WriteHeader(http.StatusOK)
+			_, _ = writer.Write([]byte("ready"))
+		} else {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = writer.Write([]byte("not ready"))
+		}
+	})
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -39,4 +55,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	// Mark the application as ready after successful initialization
+	ready.Store(true)
 }
