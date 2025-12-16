@@ -13,7 +13,7 @@ metadata:
 spec:
   parentRefs:
     - name: {{ .Values.gateway.name }}
-      namespace: {{ default .Values.gateway.namespace "default" }}
+      namespace: {{ default "default" .Values.gateway.namespace }}
   {{- if or .Values.host.exact .Values.host.prefixes }}
   hostnames:
     {{- range .Values.host.exact }}
