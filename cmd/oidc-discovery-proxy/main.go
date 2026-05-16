@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -58,8 +59,14 @@ func main() {
 		WriteTimeout: timeout,
 	}
 
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", server.Addr)
+	if err != nil {
+		logger.Error("Failed to bind listener", "error", err)
+		os.Exit(1)
+	}
+
 	go func() {
-		err := server.ListenAndServe()
+		err := server.Serve(listener)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("HTTP server error", "error", err)
 			os.Exit(1)
