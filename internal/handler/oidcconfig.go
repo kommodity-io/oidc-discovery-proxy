@@ -2,8 +2,6 @@ package handler
 
 import (
 	"net/http"
-
-	"go.uber.org/zap"
 )
 
 const (
@@ -17,7 +15,7 @@ func (h *OIDCDiscoveryProxyHandler) OpenIDConfig(writer http.ResponseWriter, req
 		return
 	}
 
-	h.logger.Info("Handling OpenID Configuration request", zap.String("path", OpenIDConfigPath))
+	h.logger.Info("Handling OpenID Configuration request", "path", OpenIDConfigPath)
 
 	data, statusCode, err := h.handle(request.Context(), OpenIDConfigPath)
 	if err != nil {
@@ -31,7 +29,7 @@ func (h *OIDCDiscoveryProxyHandler) OpenIDConfig(writer http.ResponseWriter, req
 
 	_, err = writer.Write(data)
 	if err != nil {
-		h.logger.Error("Failed to write OpenID Configuration response", zap.Error(err))
+		h.logger.Error("Failed to write OpenID Configuration response", "error", err)
 
 		return
 	}

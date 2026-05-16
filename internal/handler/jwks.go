@@ -2,8 +2,6 @@ package handler
 
 import (
 	"net/http"
-
-	"go.uber.org/zap"
 )
 
 const (
@@ -17,7 +15,7 @@ func (h *OIDCDiscoveryProxyHandler) JWKS(writer http.ResponseWriter, request *ht
 		return
 	}
 
-	h.logger.Info("Handling JWKS request", zap.String("path", JWKSPath))
+	h.logger.Info("Handling JWKS request", "path", JWKSPath)
 
 	data, statusCode, err := h.handle(request.Context(), JWKSPath)
 	if err != nil {
@@ -31,7 +29,7 @@ func (h *OIDCDiscoveryProxyHandler) JWKS(writer http.ResponseWriter, request *ht
 
 	_, err = writer.Write(data)
 	if err != nil {
-		h.logger.Error("Failed to write JWKS response", zap.Error(err))
+		h.logger.Error("Failed to write JWKS response", "error", err)
 
 		return
 	}

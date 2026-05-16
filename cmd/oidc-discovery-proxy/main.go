@@ -2,22 +2,26 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/kommodity-io/oidc-discovery-proxy/internal/handler"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
+	"github.com/lmittmann/tint"
 )
 
 const (
-	timeout     = 1 * time.Second
-	defaultPort = "8080"
+	timeout         = 1 * time.Second
+	shutdownTimeout = 5 * time.Second
+	defaultPort     = "8080"
 )
 
 var (
@@ -34,10 +38,7 @@ func main() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, triggers...)
 
-	logger, err := getLogger()
-	if err != nil {
-		panic(fmt.Sprintf("Failed to build logger: %v", err))
-	}
+	logger := getLogger()
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -46,7 +47,8 @@ func main() {
 
 	mux, err := getOIDCMux(logger)
 	if err != nil {
-		logger.Fatal("Failed to create HTTP mux", zap.Error(err))
+		logger.Error("Failed to create HTTP mux", "error", err)
+		os.Exit(1)
 	}
 
 	server := &http.Server{
@@ -58,22 +60,32 @@ func main() {
 
 	go func() {
 		err := server.ListenAndServe()
-		if err != nil {
-			panic(err)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("HTTP server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
-	// Mark the application as ready after successful initialization
 	ready.Store(true)
 
 	logger.Info("OIDC Discovery Proxy started successfully")
 
 	sig := <-signals
 
-	logger.Info("Received signal", zap.String("signal", sig.String()))
+	logger.Info("Received signal", "signal", sig.String())
+
+	ready.Store(false)
+
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	err = server.Shutdown(ctx)
+	if err != nil {
+		logger.Error("Failed to shut down HTTP server", "error", err)
+	}
 }
 
-func getOIDCMux(logger *zap.Logger) (*http.ServeMux, error) {
+func getOIDCMux(logger *slog.Logger) (*http.ServeMux, error) {
 	oidcHandler, err := handler.NewOIDCDiscoveryProxyHandler(logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OIDC handler: %w", err)
@@ -99,16 +111,40 @@ func getOIDCMux(logger *zap.Logger) (*http.ServeMux, error) {
 	return mux, nil
 }
 
-func getLogger() (*zap.Logger, error) {
-	config := zap.NewProductionConfig()
-	config.OutputPaths = []string{"stdout"}
-	config.EncoderConfig.TimeKey = "timestamp"
-	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+func getLogger() *slog.Logger {
+	level := parseLogLevel(os.Getenv("LOG_LEVEL"))
 
-	logger, err := config.Build()
-	if err != nil {
-		return nil, fmt.Errorf("failed to build logger: %w", err)
+	format := strings.ToLower(os.Getenv("LOG_FORMAT"))
+	if format == "" {
+		format = "json"
 	}
 
-	return logger, nil
+	var handler slog.Handler
+
+	switch format {
+	case "console":
+		handler = tint.NewHandler(os.Stdout, &tint.Options{
+			Level:      level,
+			TimeFormat: time.RFC3339,
+		})
+	default:
+		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+	}
+
+	return slog.New(handler)
+}
+
+func parseLogLevel(s string) slog.Level {
+	switch strings.ToLower(s) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelWarn
+	}
 }

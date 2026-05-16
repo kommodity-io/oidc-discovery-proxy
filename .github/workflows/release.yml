@@ -41,11 +41,10 @@ jobs:
           go-version: stable
           check-latest: true
 
-      - name: Install dependencies
-        run: go mod download
-
       - name: Lint
-        run: make lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
 
   build:
     name: Build binary

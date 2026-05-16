@@ -1,0 +1,7 @@
+# DS-0026: HEALTHCHECK is not feasible in distroless images (no shell/curl available).
+# Kubernetes liveness and readiness probes serve the same purpose.
+DS-0026
+
+# KSV-0125: ghcr.io/kommodity-io is the project's own registry and is intentionally trusted.
+# Trivy's default trusted registry list does not include ghcr.io.
+KSV-0125

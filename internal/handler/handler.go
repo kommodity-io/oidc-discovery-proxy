@@ -5,11 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path"
 
-	"go.uber.org/zap"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -20,11 +20,11 @@ import (
 // OIDCDiscoveryProxyHandler handles OIDC discovery proxy requests.
 type OIDCDiscoveryProxyHandler struct {
 	client *kubernetes.Clientset
-	logger *zap.Logger
+	logger *slog.Logger
 }
 
 // NewOIDCDiscoveryProxyHandler creates a new instance of OIDCDiscoveryProxyHandler.
-func NewOIDCDiscoveryProxyHandler(logger *zap.Logger) (*OIDCDiscoveryProxyHandler, error) {
+func NewOIDCDiscoveryProxyHandler(logger *slog.Logger) (*OIDCDiscoveryProxyHandler, error) {
 	client, err := createKubernetesClient()
 	if err != nil {
 		return nil, fmt.Errorf("create in-cluster HTTP client: %w", err)

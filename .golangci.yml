@@ -4,8 +4,9 @@ linters:
   default: all
   disable:
     - depguard
-    # Deprecated linters.
+    # Deprecated linters replaced by newer versions.
     - wsl
+    - gomodguard
     # We may enable this in the future.
     - exhaustruct
     # Acting up with replace directives in go.mod
