@@ -1,10 +1,12 @@
 VERSION			?= $(shell git describe --tags --always)
-TREE_STATE      ?= $(shell git describe --always --dirty --exclude='*' | grep -q dirty && echo dirty || echo clean)
+TREE_STATE	?= $(shell git describe --always --dirty --exclude='*' | grep -q dirty && echo dirty || echo clean)
 COMMIT			?= $(shell git rev-parse HEAD)
-BUILD_DATE		?= $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
+BUILD_DATE	?= $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
 GO_FLAGS		:= -ldflags "-X 'k8s.io/component-base/version.gitVersion=$(VERSION)' -X 'k8s.io/component-base/version.gitTreeState=$(TREE_STATE)' -X 'k8s.io/component-base/version.buildDate=$(BUILD_DATE)' -X 'k8s.io/component-base/version.gitCommit=$(COMMIT)'"
 SOURCES			:= $(shell find . -name '*.go')
 UPX_FLAGS		?= -qq
+LOG_FORMAT	?= console
+LOG_LEVEL		?= info
 
 ##@ General
 
@@ -50,5 +52,6 @@ build-image: ## Build the Container image.
 	--load
 
 run: ## Run the application locally.
-	LOG_FORMAT=console LOG_LEVEL=info \
+	LOG_FORMAT=$(LOG_FORMAT) \
+	LOG_LEVEL=$(LOG_LEVEL) \
 	go run $(GO_FLAGS) cmd/oidc-discovery-proxy/main.go
