@@ -161,7 +161,7 @@ replicas: 3
 ### Building from Source
 
 Requirements:
-- Go 1.25+
+- Go 1.26+
 - Make
 - Docker (for container builds)
 - UPX (optional, for binary compression)
