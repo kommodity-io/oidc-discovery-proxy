@@ -183,6 +183,7 @@ jobs:
   build-container-image:
     name: Build Container Image
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-qemu-action@v3
@@ -203,7 +204,6 @@ jobs:
     name: Release Container image
     runs-on: ubuntu-latest
     needs:
-      - build-container-image
       - release
     permissions:
       packages: write
