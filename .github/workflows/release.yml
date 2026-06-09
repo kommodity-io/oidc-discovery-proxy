@@ -193,6 +193,16 @@ jobs:
         env:
           VERSION: v1.0.0 # Use a static version for testing
 
+      - name: Build multi-arch Container image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile
+          push: false
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=v1.0.0
+
       - name: Save Container image
         run: docker save oidc-discovery-proxy:latest -o oidc-discovery-proxy-image.tar
 
