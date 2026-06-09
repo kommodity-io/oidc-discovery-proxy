@@ -189,11 +189,6 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Build Container image
-        run: make build-image
-        env:
-          VERSION: v1.0.0 # Use a static version for testing
-
-      - name: Build multi-arch Container image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -202,14 +197,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=v1.0.0
-
-      - name: Save Container image
-        run: docker save oidc-discovery-proxy:latest -o oidc-discovery-proxy-image.tar
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: oidc-discovery-proxy-image
-          path: oidc-discovery-proxy-image.tar
 
   # Docker image is built and released in a separate job, otherwise runners can encounter resource constraints.
   release-container-image:
@@ -234,13 +221,6 @@ jobs:
           sudo rm -rf /usr/local/lib/android >/dev/null 2>&1
           docker system prune -af
           df -h
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: oidc-discovery-proxy-image
-
-      - name: Load Container image
-        run: docker load -i oidc-discovery-proxy-image.tar
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
