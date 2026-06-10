@@ -38,7 +38,7 @@ lint-fix: $(LINTER) ## Run the linter and fix issues.
 	$(LINTER) run --fix
 
 build: $(SOURCES) ## Build the application.
-	go build $(GO_FLAGS) -o bin/oidc-discovery-proxy cmd/oidc-discovery-proxy/main.go
+	CGO_ENABLED=0 go build $(GO_FLAGS) -o bin/oidc-discovery-proxy cmd/oidc-discovery-proxy/main.go
 ifneq ($(UPX_FLAGS),)
 	upx $(UPX_FLAGS) bin/oidc-discovery-proxy
 endif
