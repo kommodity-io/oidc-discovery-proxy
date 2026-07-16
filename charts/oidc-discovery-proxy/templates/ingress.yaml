@@ -10,13 +10,30 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/version: {{ .Chart.AppVersion | default .Chart.Version }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
-  {{- with .Values.ingress.annotations }}
+  {{- $annotations := .Values.ingress.annotations | default dict }}
+  {{- if $annotations }}
   annotations:
-    {{- toYaml . | nindent 4 }}
+    {{- toYaml $annotations | nindent 4 }}
   {{- end }}
 spec:
   {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  {{- if not (or .Values.host.exact .Values.host.prefixes) }}
+  {{- fail "ingress.tls.enabled=true requires at least one entry in host.exact or host.prefixes" }}
+  {{- end }}
+  tls:
+    {{- range .Values.host.exact }}
+    - secretName: {{ default (printf "%s-%s-tls" $.Release.Name (. | replace "." "-") | lower) $.Values.ingress.tls.secretName }}
+      hosts:
+        - {{ . | quote }}
+    {{- end }}
+    {{- range .Values.host.prefixes }}
+    - secretName: {{ default (printf "%s-%s-tls" $.Release.Name (printf "%s.%s" . $.Values.host.domain | replace "." "-") | lower) $.Values.ingress.tls.secretName }}
+      hosts:
+        - {{ printf "%s.%s" . $.Values.host.domain | quote }}
+    {{- end }}
   {{- end }}
   rules:
     {{- if or .Values.host.exact .Values.host.prefixes }}
