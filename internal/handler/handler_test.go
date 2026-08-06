@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +15,7 @@ import (
 )
 
 func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
+	return slog.New(slog.DiscardHandler)
 }
 
 func TestGetCacheTTL(t *testing.T) {
@@ -88,16 +87,16 @@ func TestHandleCachesSuccessfulResponses(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"ok":true}`))
 	})
 
-	h := newTestHandler(t, time.Minute, upstream)
+	proxyHandler := newTestHandler(t, time.Minute, upstream)
 
-	for i := range 3 {
-		data, statusCode, err := h.handle(context.Background(), "/foo")
+	for callIndex := range 3 {
+		data, statusCode, err := proxyHandler.handle(context.Background(), "/foo")
 		if err != nil {
-			t.Fatalf("unexpected error on call %d: %v", i, err)
+			t.Fatalf("unexpected error on call %d: %v", callIndex, err)
 		}
 
 		if statusCode != http.StatusOK || string(data) != `{"ok":true}` {
-			t.Fatalf("call %d: got statusCode=%d data=%q", i, statusCode, data)
+			t.Fatalf("call %d: got statusCode=%d data=%q", callIndex, statusCode, data)
 		}
 	}
 
@@ -117,12 +116,12 @@ func TestHandleDoesNotCacheErrorResponses(t *testing.T) {
 		_, _ = writer.Write([]byte(`boom`))
 	})
 
-	h := newTestHandler(t, time.Minute, upstream)
+	proxyHandler := newTestHandler(t, time.Minute, upstream)
 
-	for i := range 2 {
-		_, _, err := h.handle(context.Background(), "/foo")
+	for callIndex := range 2 {
+		_, _, err := proxyHandler.handle(context.Background(), "/foo")
 		if err == nil {
-			t.Fatalf("call %d: expected error from upstream failure", i)
+			t.Fatalf("call %d: expected error from upstream failure", callIndex)
 		}
 	}
 
@@ -142,16 +141,16 @@ func TestHandleExpiresCacheAfterTTL(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"ok":true}`))
 	})
 
-	h := newTestHandler(t, 10*time.Millisecond, upstream)
+	proxyHandler := newTestHandler(t, 10*time.Millisecond, upstream)
 
-	_, _, err := h.handle(context.Background(), "/foo")
+	_, _, err := proxyHandler.handle(context.Background(), "/foo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	time.Sleep(20 * time.Millisecond)
 
-	_, _, err = h.handle(context.Background(), "/foo")
+	_, _, err = proxyHandler.handle(context.Background(), "/foo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -161,25 +160,38 @@ func TestHandleExpiresCacheAfterTTL(t *testing.T) {
 	}
 }
 
+// pathEchoUpstream returns an http.Handler that responds with a fixed, known body per path,
+// looked up from a static table rather than echoing the request path back verbatim.
+func pathEchoUpstream(hits *atomic.Int32) http.Handler {
+	responses := map[string][]byte{
+		OpenIDConfigPath: []byte(OpenIDConfigPath),
+		JWKSPath:         []byte(JWKSPath),
+		"/other-path":    []byte("/other-path"),
+	}
+
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if hits != nil {
+			hits.Add(1)
+		}
+
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write(responses[request.URL.Path])
+	})
+}
+
 func TestHandleCachesPathsIndependently(t *testing.T) {
 	t.Parallel()
 
 	var hits atomic.Int32
 
-	upstream := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		hits.Add(1)
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write([]byte(request.URL.Path))
-	})
+	proxyHandler := newTestHandler(t, time.Minute, pathEchoUpstream(&hits))
 
-	h := newTestHandler(t, time.Minute, upstream)
-
-	data1, _, err := h.handle(context.Background(), OpenIDConfigPath)
+	data1, _, err := proxyHandler.handle(context.Background(), OpenIDConfigPath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	data2, _, err := h.handle(context.Background(), JWKSPath)
+	data2, _, err := proxyHandler.handle(context.Background(), JWKSPath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -199,12 +211,7 @@ func TestHandleCachesPathsIndependently(t *testing.T) {
 func TestHandleConcurrentRequests(t *testing.T) {
 	t.Parallel()
 
-	upstream := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.WriteHeader(http.StatusOK)
-		_, _ = writer.Write([]byte(request.URL.Path))
-	})
-
-	h := newTestHandler(t, time.Minute, upstream)
+	proxyHandler := newTestHandler(t, time.Minute, pathEchoUpstream(nil))
 
 	paths := []string{OpenIDConfigPath, JWKSPath, "/other-path"}
 
@@ -212,7 +219,7 @@ func TestHandleConcurrentRequests(t *testing.T) {
 
 	var waitGroup sync.WaitGroup
 
-	for g := range numGoroutines {
+	for workerID := range numGoroutines {
 		waitGroup.Add(1)
 
 		go func(seed int) {
@@ -220,7 +227,7 @@ func TestHandleConcurrentRequests(t *testing.T) {
 
 			path := paths[seed%len(paths)]
 
-			data, statusCode, err := h.handle(context.Background(), path)
+			data, statusCode, err := proxyHandler.handle(context.Background(), path)
 			if err != nil {
 				t.Errorf("handle(%q) returned error: %v", path, err)
 
@@ -230,7 +237,7 @@ func TestHandleConcurrentRequests(t *testing.T) {
 			if statusCode != http.StatusOK || string(data) != path {
 				t.Errorf("handle(%q) = (%q, %d), want (%q, %d)", path, data, statusCode, path, http.StatusOK)
 			}
-		}(g)
+		}(workerID)
 	}
 
 	waitGroup.Wait()

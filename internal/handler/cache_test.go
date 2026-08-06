@@ -2,7 +2,6 @@ package handler
 
 import (
 	"fmt"
-	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -13,20 +12,20 @@ func TestResponseCacheSetGet(t *testing.T) {
 
 	cache := newResponseCache(time.Minute)
 
-	_, _, found := cache.get("/foo")
+	_, found := cache.get("/foo")
 	if found {
 		t.Fatalf("expected cache miss before any set")
 	}
 
-	cache.set("/foo", []byte("bar"), http.StatusOK)
+	cache.set("/foo", []byte("bar"))
 
-	data, statusCode, found := cache.get("/foo")
+	data, found := cache.get("/foo")
 	if !found {
 		t.Fatalf("expected cache hit after set")
 	}
 
-	if string(data) != "bar" || statusCode != http.StatusOK {
-		t.Fatalf("got data=%q statusCode=%d, want data=%q statusCode=%d", data, statusCode, "bar", http.StatusOK)
+	if string(data) != "bar" {
+		t.Fatalf("got data=%q, want data=%q", data, "bar")
 	}
 }
 
@@ -35,15 +34,15 @@ func TestResponseCacheExpiry(t *testing.T) {
 
 	cache := newResponseCache(10 * time.Millisecond)
 
-	cache.set("/foo", []byte("bar"), http.StatusOK)
+	cache.set("/foo", []byte("bar"))
 
-	if _, _, found := cache.get("/foo"); !found {
+	if _, found := cache.get("/foo"); !found {
 		t.Fatalf("expected cache hit immediately after set")
 	}
 
 	time.Sleep(20 * time.Millisecond)
 
-	if _, _, found := cache.get("/foo"); found {
+	if _, found := cache.get("/foo"); found {
 		t.Fatalf("expected cache miss after TTL expiry")
 	}
 }
@@ -53,9 +52,9 @@ func TestResponseCacheZeroTTLDisablesCaching(t *testing.T) {
 
 	cache := newResponseCache(0)
 
-	cache.set("/foo", []byte("bar"), http.StatusOK)
+	cache.set("/foo", []byte("bar"))
 
-	if _, _, found := cache.get("/foo"); found {
+	if _, found := cache.get("/foo"); found {
 		t.Fatalf("expected zero TTL to disable caching")
 	}
 }
@@ -65,11 +64,11 @@ func TestResponseCacheDistinctKeys(t *testing.T) {
 
 	cache := newResponseCache(time.Minute)
 
-	cache.set("/foo", []byte("foo-data"), http.StatusOK)
-	cache.set("/bar", []byte("bar-data"), http.StatusOK)
+	cache.set("/foo", []byte("foo-data"))
+	cache.set("/bar", []byte("bar-data"))
 
-	fooData, _, fooFound := cache.get("/foo")
-	barData, _, barFound := cache.get("/bar")
+	fooData, fooFound := cache.get("/foo")
+	barData, barFound := cache.get("/bar")
 
 	if !fooFound || !barFound {
 		t.Fatalf("expected both keys to be cached independently")
@@ -98,14 +97,14 @@ func TestResponseCacheConcurrentAccess(t *testing.T) {
 	keys := make([]string, numKeys)
 	values := make([][]byte, numKeys)
 
-	for i := range numKeys {
-		keys[i] = fmt.Sprintf("/key-%d", i)
-		values[i] = fmt.Appendf(nil, "value-for-key-%d", i)
+	for keyIndex := range numKeys {
+		keys[keyIndex] = fmt.Sprintf("/key-%d", keyIndex)
+		values[keyIndex] = fmt.Appendf(nil, "value-for-key-%d", keyIndex)
 	}
 
 	var waitGroup sync.WaitGroup
 
-	for g := range numGoroutines {
+	for workerID := range numGoroutines {
 		waitGroup.Add(1)
 
 		go func(seed int) {
@@ -115,21 +114,21 @@ func TestResponseCacheConcurrentAccess(t *testing.T) {
 				idx := (seed + op) % numKeys
 
 				if op%2 == 0 {
-					cache.set(keys[idx], values[idx], http.StatusOK)
+					cache.set(keys[idx], values[idx])
 
 					continue
 				}
 
-				data, statusCode, found := cache.get(keys[idx])
+				data, found := cache.get(keys[idx])
 				if !found {
 					continue
 				}
 
-				if statusCode != http.StatusOK || string(data) != string(values[idx]) {
-					t.Errorf("get(%q) = (%q, %d), want value for that key", keys[idx], data, statusCode)
+				if string(data) != string(values[idx]) {
+					t.Errorf("get(%q) = %q, want %q", keys[idx], data, values[idx])
 				}
 			}
-		}(g)
+		}(workerID)
 	}
 
 	waitGroup.Wait()

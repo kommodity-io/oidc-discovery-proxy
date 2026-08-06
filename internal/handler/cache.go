@@ -9,14 +9,10 @@ import (
 // cacheSize of 0 makes the LRU unbounded; the proxy only ever caches a handful of well-known paths.
 const cacheSize = 0
 
-type cacheEntry struct {
-	data       []byte
-	statusCode int
-}
-
 // responseCache is a thread-safe, per-instance TTL cache for proxied responses.
+// Only successful (HTTP 200) responses are ever cached, so no status code needs to be stored.
 type responseCache struct {
-	cache *expirable.LRU[string, cacheEntry]
+	cache *expirable.LRU[string, []byte]
 }
 
 // newResponseCache builds a cache with the given TTL. A TTL <= 0 disables caching entirely.
@@ -26,27 +22,22 @@ func newResponseCache(ttl time.Duration) *responseCache {
 	}
 
 	return &responseCache{
-		cache: expirable.NewLRU[string, cacheEntry](cacheSize, nil, ttl),
+		cache: expirable.NewLRU[string, []byte](cacheSize, nil, ttl),
 	}
 }
 
-func (c *responseCache) get(key string) ([]byte, int, bool) {
+func (c *responseCache) get(key string) ([]byte, bool) {
 	if c.cache == nil {
-		return nil, 0, false
+		return nil, false
 	}
 
-	entry, found := c.cache.Get(key)
-	if !found {
-		return nil, 0, false
-	}
-
-	return entry.data, entry.statusCode, true
+	return c.cache.Get(key)
 }
 
-func (c *responseCache) set(key string, data []byte, statusCode int) {
+func (c *responseCache) set(key string, data []byte) {
 	if c.cache == nil {
 		return
 	}
 
-	c.cache.Add(key, cacheEntry{data: data, statusCode: statusCode})
+	c.cache.Add(key, data)
 }

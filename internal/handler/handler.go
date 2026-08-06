@@ -58,8 +58,8 @@ func NewOIDCDiscoveryProxyHandler(logger *slog.Logger) (*OIDCDiscoveryProxyHandl
 
 //nolint:wrapcheck // Errors are handled in the calling functions.
 func (h *OIDCDiscoveryProxyHandler) handle(ctx context.Context, path string) ([]byte, int, error) {
-	if data, statusCode, found := h.cache.get(path); found {
-		return data, statusCode, nil
+	if data, found := h.cache.get(path); found {
+		return data, http.StatusOK, nil
 	}
 
 	bytes, err := h.client.RESTClient().Get().AbsPath(path).DoRaw(ctx)
@@ -74,7 +74,7 @@ func (h *OIDCDiscoveryProxyHandler) handle(ctx context.Context, path string) ([]
 		return nil, int(kErr.ErrStatus.Code), err
 	}
 
-	h.cache.set(path, bytes, http.StatusOK)
+	h.cache.set(path, bytes)
 
 	return bytes, http.StatusOK, nil
 }

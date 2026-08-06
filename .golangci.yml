@@ -13,3 +13,5 @@ linters:
     - gomoddirectives
     # Kubernetes objects are all interface based
     - ireturn
+    # Tests deliberately live in-package to exercise unexported cache/handler internals.
+    - testpackage
