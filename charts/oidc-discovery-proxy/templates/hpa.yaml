@@ -8,7 +8,7 @@ metadata:
   labels:
     app.kubernetes.io/name: {{ .Chart.Name }}
     app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/version: {{ .Chart.AppVersion | default .Chart.Version }}
+    app.kubernetes.io/version: {{ include "oidc-discovery-proxy.version" . }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
 spec:
   scaleTargetRef:
@@ -17,22 +17,22 @@ spec:
     name: {{ .Release.Name }}
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
-  {{- with .Values.autoscaling.targetCPUUtilizationPercentage }}
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: {{ . }}
+  {{- $metrics := list }}
+  {{- if .Values.autoscaling.targetCPUUtilizationPercentage }}
+  {{- $metrics = append $metrics (dict "type" "Resource" "resource" (dict "name" "cpu" "target" (dict "type" "Utilization" "averageUtilization" (.Values.autoscaling.targetCPUUtilizationPercentage | int)))) }}
   {{- end }}
-  {{- with .Values.autoscaling.targetMemoryUtilizationPercentage }}
+  {{- if .Values.autoscaling.targetMemoryUtilizationPercentage }}
+  {{- $metrics = append $metrics (dict "type" "Resource" "resource" (dict "name" "memory" "target" (dict "type" "Utilization" "averageUtilization" (.Values.autoscaling.targetMemoryUtilizationPercentage | int)))) }}
+  {{- end }}
+  {{- if $metrics }}
   metrics:
-    - type: Resource
+  {{- range $metrics }}
+    - type: {{ .type }}
       resource:
-        name: memory
+        name: {{ .resource.name }}
         target:
-          type: Utilization
-          averageUtilization: {{ . }}
+          type: {{ .resource.target.type }}
+          averageUtilization: {{ .resource.target.averageUtilization }}
+  {{- end }}
   {{- end }}
 {{- end }}
