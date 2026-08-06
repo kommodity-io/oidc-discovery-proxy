@@ -50,8 +50,8 @@ The proxy runs as a lightweight Go application that forwards requests to the Kub
 ## Security Considerations
 
 - The proxy uses in-cluster authentication to access the Kubernetes API
-- No sensitive data is stored or cached
-- Requests are directly proxied to the API server
+- Responses are cached in-memory per instance for a short, configurable TTL (see [Environment Variables](#environment-variables)); no other state is stored
+- Only the public discovery document and JWKS endpoints are proxied and cached — no sensitive data is involved
 - TLS termination should be handled by your Ingress/Gateway
 - Consider rate limiting at the Ingress/Gateway level
 
@@ -107,6 +107,16 @@ helm install oidc-discovery-proxy kommodity/oidc-discovery-proxy \
 ```
 
 ## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | HTTP listen port | `8080` |
+| `LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) | `warn` |
+| `LOG_FORMAT` | Log format (`json`, `console`) | `json` |
+| `CACHE_TTL_SECONDS` | How long proxied responses are cached in-memory per instance. Set to `0` to disable caching | `60` |
+| `KUBECONFIG` | Path to kubeconfig when running outside the cluster | `~/.kube/config` |
 
 ### Chart Values
 
