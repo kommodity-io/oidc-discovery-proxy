@@ -54,7 +54,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ .Chart.Name }}
-          image: {{ include "oidc-discovery-proxy.image" (dict "image" .Values.image "defaultTag" .Chart.AppVersion) | quote }}
+          image: {{ include "oidc-discovery-proxy.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
