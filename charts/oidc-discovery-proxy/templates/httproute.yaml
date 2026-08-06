@@ -3,7 +3,7 @@
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: {{ .Chart.Name }}
+  name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ .Chart.Name }}
@@ -29,13 +29,13 @@ spec:
             type: Exact
             value: /.well-known/openid-configuration
       backendRefs:
-        - name: {{ .Chart.Name }}
+        - name: {{ .Release.Name }}
           port: 80
     - matches:
         - path:
             type: Exact
             value: /openid/v1/jwks
       backendRefs:
-        - name: {{ .Chart.Name }}
+        - name: {{ .Release.Name }}
           port: 80
 {{- end }}

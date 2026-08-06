@@ -3,7 +3,7 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ .Chart.Name }}
+  name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ .Chart.Name }}
@@ -45,14 +45,14 @@ spec:
             pathType: Exact
             backend:
               service:
-                name: {{ $.Chart.Name }}
+                name: {{ $.Release.Name }}
                 port:
                   number: 80
           - path: /openid/v1/jwks
             pathType: Exact
             backend:
               service:
-                name: {{ $.Chart.Name }}
+                name: {{ $.Release.Name }}
                 port:
                   number: 80
     {{- end }}
@@ -64,14 +64,14 @@ spec:
             pathType: Exact
             backend:
               service:
-                name: {{ $.Chart.Name }}
+                name: {{ $.Release.Name }}
                 port:
                   number: 80
           - path: /openid/v1/jwks
             pathType: Exact
             backend:
               service:
-                name: {{ $.Chart.Name }}
+                name: {{ $.Release.Name }}
                 port:
                   number: 80
     {{- end }}
@@ -82,14 +82,14 @@ spec:
             pathType: Exact
             backend:
               service:
-                name: {{ .Chart.Name }}
+                name: {{ .Release.Name }}
                 port:
                   number: 80
           - path: /openid/v1/jwks
             pathType: Exact
             backend:
               service:
-                name: {{ .Chart.Name }}
+                name: {{ .Release.Name }}
                 port:
                   number: 80
     {{- end }}
