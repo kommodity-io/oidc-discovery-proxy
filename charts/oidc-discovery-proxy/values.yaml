@@ -21,7 +21,8 @@ host:
 
 image:
   repository: ghcr.io/kommodity-io/oidc-discovery-proxy
-  tag: v1.2.2
+  # Image tag. Defaults to the chart's appVersion if omitted.
+  tag: ~
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
