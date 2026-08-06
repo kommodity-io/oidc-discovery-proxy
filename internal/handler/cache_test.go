@@ -40,11 +40,11 @@ func TestResponseCacheExpiry(t *testing.T) {
 		t.Fatalf("expected cache hit immediately after set")
 	}
 
-	time.Sleep(20 * time.Millisecond)
+	waitFor(t, time.Second, func() bool {
+		_, found := cache.get("/foo")
 
-	if _, found := cache.get("/foo"); found {
-		t.Fatalf("expected cache miss after TTL expiry")
-	}
+		return !found
+	})
 }
 
 func TestResponseCacheZeroTTLDisablesCaching(t *testing.T) {

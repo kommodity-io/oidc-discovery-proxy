@@ -18,6 +18,26 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.DiscardHandler)
 }
 
+// waitFor polls condition until it returns true, failing the test if timeout elapses first.
+// Used instead of a fixed sleep so TTL-expiry assertions aren't flaky on slow/loaded runners.
+func waitFor(t *testing.T, timeout time.Duration, condition func() bool) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+
+	for {
+		if condition() {
+			return
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf("condition not met within %v", timeout)
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestGetCacheTTL(t *testing.T) {
 	tests := map[string]struct {
 		envValue string
@@ -148,7 +168,11 @@ func TestHandleExpiresCacheAfterTTL(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	time.Sleep(20 * time.Millisecond)
+	waitFor(t, time.Second, func() bool {
+		_, found := proxyHandler.cache.get("/foo")
+
+		return !found
+	})
 
 	_, _, err = proxyHandler.handle(context.Background(), "/foo")
 	if err != nil {

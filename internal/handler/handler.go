@@ -42,7 +42,7 @@ type OIDCDiscoveryProxyHandler struct {
 func NewOIDCDiscoveryProxyHandler(logger *slog.Logger) (*OIDCDiscoveryProxyHandler, error) {
 	client, err := createKubernetesClient()
 	if err != nil {
-		return nil, fmt.Errorf("create in-cluster HTTP client: %w", err)
+		return nil, fmt.Errorf("create Kubernetes client: %w", err)
 	}
 
 	ttl := getCacheTTL(logger)
@@ -98,6 +98,26 @@ func getCacheTTL(logger *slog.Logger) time.Duration {
 }
 
 func createKubernetesClient() (*kubernetes.Clientset, error) {
+	if os.Getenv("KUBERNETES_SERVICE_HOST") == "" {
+		return createOutOfClusterKubernetesClient()
+	}
+
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load in-cluster kubeconfig: %w", err)
+	}
+
+	applyClientRateLimits(config)
+
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	return client, nil
+}
+
+func createOutOfClusterKubernetesClient() (*kubernetes.Clientset, error) {
 	kubeconfig := os.Getenv("KUBECONFIG")
 	if kubeconfig == "" {
 		home := homedir.HomeDir()
@@ -108,26 +128,9 @@ func createKubernetesClient() (*kubernetes.Clientset, error) {
 		kubeconfig = path.Join(home, ".kube", "config")
 	}
 
-	isRunningOutsideCluster := os.Getenv("KUBERNETES_SERVICE_HOST") == ""
-	if isRunningOutsideCluster {
-		config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load local kubeconfig: %w", err)
-		}
-
-		applyClientRateLimits(config)
-
-		client, err := kubernetes.NewForConfig(config)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
-		}
-
-		return client, nil
-	}
-
-	config, err := rest.InClusterConfig()
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load in-cluster kubeconfig: %w", err)
+		return nil, fmt.Errorf("failed to load local kubeconfig: %w", err)
 	}
 
 	applyClientRateLimits(config)
