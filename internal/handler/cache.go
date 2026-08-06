@@ -3,7 +3,7 @@ package handler
 import (
 	"time"
 
-	lru "github.com/hashicorp/golang-lru/v2/expirable"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 )
 
 // cacheSize of 0 makes the LRU unbounded; the proxy only ever caches a handful of well-known paths.
@@ -16,7 +16,7 @@ type cacheEntry struct {
 
 // responseCache is a thread-safe, per-instance TTL cache for proxied responses.
 type responseCache struct {
-	cache *lru.LRU[string, cacheEntry]
+	cache *expirable.LRU[string, cacheEntry]
 }
 
 // newResponseCache builds a cache with the given TTL. A TTL <= 0 disables caching entirely.
@@ -26,7 +26,7 @@ func newResponseCache(ttl time.Duration) *responseCache {
 	}
 
 	return &responseCache{
-		cache: lru.NewLRU[string, cacheEntry](cacheSize, nil, ttl),
+		cache: expirable.NewLRU[string, cacheEntry](cacheSize, nil, ttl),
 	}
 }
 
