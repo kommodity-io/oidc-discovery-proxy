@@ -9,10 +9,6 @@ on:
       - main
   workflow_dispatch:
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
   lint:
     name: Lint
@@ -218,7 +214,7 @@ jobs:
               {
                 echo "$changes"
               } >>"$chart.diff"
-              changed+=1
+              changed=$((changed + 1))
             fi
           done
 
@@ -289,6 +285,9 @@ jobs:
 
       - name: Compute expected release version
         id: expected
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           set -eou pipefail
 
@@ -306,29 +305,40 @@ jobs:
 
           # ponytail: mirrors @semantic-release/commit-analyzer defaults
           # (BREAKING -> major, feat -> minor, fix/perf -> patch, else no release).
-          # Analyzes the union of commits reachable from origin/main and the PR head
-          # since the last tag, i.e. exactly what a post-merge release would see.
-          # Does not handle reverts or custom release rules; not used in this repo.
+          # This repo uses squash merges, so the PR title becomes the single
+          # commit message that semantic-release analyzes post-merge. We also
+          # union with any unreleased commits on origin/main since the last tag
+          # (e.g. a prior fix that hasn't been released yet).
           bump=""
-          if [[ -n "$last_tag" ]]; then
-            mapfile -t shas < <(git log --format='%H' "^${last_tag}" origin/main HEAD)
-          else
-            mapfile -t shas < <(git log --format='%H' origin/main HEAD)
-          fi
 
-          for sha in "${shas[@]}"; do
-            subject=$(git show -s --format='%s' "$sha")
-            body=$(git show -s --format='%B' "$sha")
+          analyze_conventional () {
+            local subject="$1"
+            local body="$2"
 
-            if printf '%s\n' "$body" | grep -qiE 'BREAKING[ -]CHANGE:'; then bump="major"; break; fi
-            if printf '%s' "$subject" | grep -qiE '^[a-z]+(\([^)]*\))?!:'; then bump="major"; break; fi
+            if printf '%s\n' "$body" | grep -qiE 'BREAKING[ -]CHANGE:'; then bump="major"; return; fi
+            if printf '%s' "$subject" | grep -qiE '^[a-z]+(\([^)]*\))?!:'; then bump="major"; return; fi
 
             if printf '%s' "$subject" | grep -qiE '^feat(\([^)]*\))?:'; then
               [[ -z "$bump" || "$bump" == "patch" ]] && bump="minor"
             elif printf '%s' "$subject" | grep -qiE '^(fix|perf)(\([^)]*\))?:'; then
               [[ -z "$bump" ]] && bump="patch"
             fi
+          }
+
+          # Unreleased commits already on main since the last tag.
+          if [[ -n "$last_tag" ]]; then
+            mapfile -t main_shas < <(git log --format='%H' "^${last_tag}" origin/main)
+          else
+            mapfile -t main_shas < <(git log --format='%H' origin/main)
+          fi
+
+          for sha in "${main_shas[@]}"; do
+            analyze_conventional "$(git show -s --format='%s' "$sha")" "$(git show -s --format='%B' "$sha")"
+            [[ "$bump" == "major" ]] && break
           done
+
+          # The PR title is what the squash-merge commit message will be.
+          analyze_conventional "$PR_TITLE" "$PR_BODY"
 
           if [[ -n "$bump" ]]; then
             case "$bump" in
@@ -344,6 +354,7 @@ jobs:
           fi
 
           echo "expected_version=$expected_version" >>"$GITHUB_OUTPUT"
+          echo "expected_app_version=v${expected_version}" >>"$GITHUB_OUTPUT"
           echo "will_release=$will_release" >>"$GITHUB_OUTPUT"
           echo "last_tag=$last_tag" >>"$GITHUB_OUTPUT"
 
@@ -358,43 +369,56 @@ jobs:
           cd ..
 
           expected_version="${{ steps.expected.outputs.expected_version }}"
+          expected_app_version="${{ steps.expected.outputs.expected_app_version }}"
           will_release="${{ steps.expected.outputs.will_release }}"
 
           pending=0
           touch pending.md
 
-          echo '| Chart | Valid | `main` | `HEAD` | Expected |' >>pending.md
+          echo '| Chart | Field | `main` | `HEAD` | Expected |' >>pending.md
           echo '| --- | --- | --- | --- | --- |' >>pending.md
 
           for chart in "${changed_charts[@]}"; do
             # This is a deleted chart. Any version is valid.
             if [[ ! -d "pr/charts/$chart" ]]; then
-              echo "| $chart | ✅ | N/A | N/A | N/A |" >>pending.md
+              echo "| $chart | version | N/A | N/A | N/A |" >>pending.md
+              echo "| $chart | appVersion | N/A | N/A | N/A |" >>pending.md
               continue
             fi
 
             pr_version=$(grep -oP '^version: \K[^\n]+' pr/charts/$chart/Chart.yaml | tr -d '\n')
+            pr_appversion=$(grep -oP '^appVersion: "\K[^"]+' pr/charts/$chart/Chart.yaml | tr -d '\n')
 
             # This is a new chart. Any version is valid.
             if [[ ! -d "main/charts/$chart" ]]; then
               main_version="N/A"
+              main_appversion="N/A"
             else
               main_version=$(grep -oP '^version: \K[^\n]+' main/charts/$chart/Chart.yaml | tr -d '\n')
+              main_appversion=$(grep -oP '^appVersion: "\K[^"]+' main/charts/$chart/Chart.yaml | tr -d '\n')
             fi
 
             # No release would be produced by these commits, so there is no
             # next version to align the chart with.
             if [[ "$will_release" != "true" ]]; then
-              echo "| $chart | ❌ | $main_version | $pr_version | no release triggered |" >>pending.md
-              pending+=1
+              echo "| $chart | version | $main_version | $pr_version | no release triggered |" >>pending.md
+              echo "| $chart | appVersion | $main_appversion | $pr_appversion | no release triggered |" >>pending.md
+              pending=$((pending + 2))
               continue
             fi
 
             if [[ "$pr_version" == "$expected_version" ]]; then
-              echo "| $chart | ✅ | $main_version | $pr_version | $expected_version |" >>pending.md
+              echo "| $chart | version | $main_version | $pr_version | $expected_version |" >>pending.md
             else
-              echo "| $chart | ❌ | $main_version | $pr_version | $expected_version |" >>pending.md
-              pending+=1
+              echo "| $chart | version | $main_version | $pr_version | $expected_version |" >>pending.md
+              pending=$((pending + 1))
+            fi
+
+            if [[ "$pr_appversion" == "$expected_app_version" ]]; then
+              echo "| $chart | appVersion | $main_appversion | $pr_appversion | $expected_app_version |" >>pending.md
+            else
+              echo "| $chart | appVersion | $main_appversion | $pr_appversion | $expected_app_version |" >>pending.md
+              pending=$((pending + 1))
             fi
           done
 
@@ -423,7 +447,7 @@ jobs:
           body: |
             ## 📦 Chart version check
 
-            When a chart is changed, its `version` in `Chart.yaml` must match the next semantic release version computed from the PR's conventional commits (`feat` → minor, `fix`/`perf` → patch, `BREAKING CHANGE` → major).
+            When a chart is changed, its `version` and `appVersion` in `Chart.yaml` must match the next semantic release version computed from the PR title (`feat` → minor, `fix`/`perf` → patch, `BREAKING CHANGE` → major).
 
             Last release: `${{ steps.expected.outputs.last_tag }}`
 
