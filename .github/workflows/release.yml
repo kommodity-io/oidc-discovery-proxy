@@ -4,22 +4,9 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - "**/*.md"
-      - "images/*.png"
-      - charts/**/*.yaml
-      - charts/**/*.tpl
-      - scripts/**/*.sh
   pull_request:
     branches:
       - main
-    paths-ignore:
-      - "**/*.md"
-      - "images/*.png"
-      - "**/*.tf"
-      - charts/**/*.yaml
-      - charts/**/*.tpl
-      - scripts/**/*.sh
 
 jobs:
   lint:
