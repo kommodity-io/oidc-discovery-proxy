@@ -1,0 +1,698 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 10
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8
+        with:
+          version: v2.12.2
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: Test
+        run: go test ./...
+
+  build:
+    name: Build binary
+    runs-on: ubuntu-latest
+    needs:
+      - test
+    permissions:
+      id-token: write
+      pages: write
+      contents: write
+    strategy:
+      matrix:
+        os: [linux, windows, darwin]
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Detect semantic release
+        uses: cycjimmy/semantic-release-action@b12c8f6015dc215fe37bc154d4ad456dd3833c90 # v6.0.0
+        id: semantic
+        with:
+          semantic_version: 22
+          dry_run: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute version and compression
+        id: version
+        run: |
+          set -eou pipefail
+
+          version="${{ steps.semantic.outputs.new_release_git_tag }}"
+          compression="--ultra-brute -9"
+          if [[ -z "$version" ]]; then
+            version="$(git describe --tags --always)"
+            compression="-qq"
+          fi
+
+          # Avoid compression for darwin as it is not supported on MacOS 13+.
+          # Reference: https://github.com/upx/upx/issues/612
+          if [[ "${{ matrix.os }}" == "darwin" ]]; then
+            compression=""
+          fi
+
+          # Avoid compression for windows/arm64 as it is not supported.
+          # Reference: https://github.com/upx/upx/issues/650
+          if [[ "${{ matrix.os }}" == "windows" && "${{ matrix.arch }}" == "arm64" ]]; then
+            compression=""
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "compression=$compression" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: make build
+        env:
+          GOOS: "${{ matrix.os }}"
+          GOARCH: "${{ matrix.arch }}"
+          VERSION: "${{ steps.version.outputs.version }}"
+          UPX_FLAGS: "${{ steps.version.outputs.compression }}"
+
+      - name: Rename binary
+        run: |
+          set -eou pipefail
+
+          target="oidc-discovery-proxy-${{ matrix.os }}-${{ matrix.arch }}-${{ steps.version.outputs.version }}"
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            target="${target}.exe"
+          fi
+
+          mv bin/oidc-discovery-proxy bin/${target}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: oidc-discovery-proxy-${{ matrix.os }}-${{ matrix.arch }}-${{ steps.version.outputs.version }}
+          path: bin/oidc-discovery-proxy-*
+
+  build-container-image:
+    name: Build Container image
+    runs-on: ubuntu-latest
+    needs:
+      - test
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Build Container image
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.180
+        with:
+          context: .
+          file: Containerfile
+          push: false
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=v1.0.0
+
+  check-charts:
+    name: Check charts
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+          fetch-depth: 0
+
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          path: main
+
+      - name: Setup Helm
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+
+      - name: Diff charts
+        id: diff
+        run: |
+          set -eou pipefail
+
+          cd pr
+
+          git fetch origin main
+          mapfile -t changed_charts < <(git diff --name-only origin/main | grep -oE '^charts/([^/]+)' | sed 's/charts\///' | sort -u)
+
+          cd ..
+
+          changed=0
+          touch changes.md
+
+          template () {
+            source="$1"
+            chart="$2"
+
+            # If the chart never existed or was deleted, create an empty file.
+            if [[ ! -d "$source/charts/$chart" ]]; then
+              touch "$source.yaml"
+              return
+            fi
+
+            # Build dependencies.
+            [[ ! -f "$source/charts/$chart/Chart.lock" ]] && helm dependency build "$source/charts/$chart"
+
+            helm template release "$source/charts/$chart" >"$source.yaml"
+          }
+
+          for chart in "${changed_charts[@]}"; do
+            template main "$chart"
+            template pr "$chart"
+
+            if ! changes="$(diff -u main.yaml pr.yaml)"; then
+              {
+                echo "<details>"
+                echo "<summary><code>helm template release charts/$chart</code></summary>"
+                echo ""
+                echo '```diff'
+                echo "$changes"
+                echo '```'
+                echo ""
+                echo "</details>"
+                echo ""
+              } >>changes.md
+              {
+                echo "$changes"
+              } >>"$chart.diff"
+              changed=$((changed + 1))
+            fi
+          done
+
+          echo "changed=$changed" >>"$GITHUB_OUTPUT"
+
+          # Check if the character count exceeds the limit.
+          if [[ $(wc -c <changes.md) -gt 65400 ]]; then
+            echo "long=1" >>"$GITHUB_OUTPUT"
+          else
+            echo "long=0" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload diffs
+        uses: actions/upload-artifact@v5
+        id: diff-upload
+        if: steps.diff.outputs.changed != '0' && steps.diff.outputs.long == '1'
+        with:
+          name: chart-diffs
+          path: "*.diff"
+
+      - name: Create diff comment
+        id: diff-comment
+        run: |
+          set -eou pipefail
+
+          # Check if the character count exceeds the limit.
+          if [[ $(wc -c <changes.md) -gt 65400 ]]; then
+            {
+              echo 'changes<<EOF'
+              echo "Changes are too long to be displayed inline. [Download the diffs here](${{ steps.diff-upload.outputs.artifact-url }})."
+              echo EOF
+            } >>"$GITHUB_OUTPUT"
+          else
+            {
+              echo 'changes<<EOF'
+              cat changes.md
+              echo EOF
+            } >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Find diff comment
+        uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4.0.0
+        id: find-diff
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "Chart changes"
+
+      - name: Publish chart changes
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        if: steps.diff.outputs.changed != '0'
+        with:
+          comment-id: ${{ steps.find-diff.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## 💥 Chart changes
+
+            The following charts have been modified.
+
+            ${{ steps.diff-comment.outputs.changes }}
+          edit-mode: replace
+
+      - name: Delete diff comment
+        if: steps.diff.outputs.changed == '0' && steps.find-diff.outputs.comment-id != ''
+        run: gh api /repos/${{ github.repository }}/issues/comments/${{ steps.find-diff.outputs.comment-id }} -X DELETE
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute expected release version
+        id: expected
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -eou pipefail
+
+          cd pr
+          git fetch origin main
+
+          # Last semver tag reachable from HEAD.
+          last_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
+          if [[ -z "$last_tag" ]]; then
+            base_major=0; base_minor=0; base_patch=0
+          else
+            base=${last_tag#v}
+            IFS='.' read -r base_major base_minor base_patch <<<"$base"
+          fi
+
+          # ponytail: mirrors @semantic-release/commit-analyzer defaults
+          # (BREAKING -> major, feat -> minor, fix/perf -> patch, else no release).
+          # This repo uses squash merges, so the PR title becomes the single
+          # commit message that semantic-release analyzes post-merge. We also
+          # union with any unreleased commits on origin/main since the last tag
+          # (e.g. a prior fix that hasn't been released yet).
+          bump=""
+
+          analyze_conventional () {
+            local subject="$1"
+            local body="$2"
+
+            if printf '%s\n' "$body" | grep -qiE 'BREAKING[ -]CHANGE:'; then bump="major"; return; fi
+            if printf '%s' "$subject" | grep -qiE '^[a-z]+(\([^)]*\))?!:'; then bump="major"; return; fi
+
+            if printf '%s' "$subject" | grep -qiE '^feat(\([^)]*\))?:'; then
+              [[ -z "$bump" || "$bump" == "patch" ]] && bump="minor"
+            elif printf '%s' "$subject" | grep -qiE '^(fix|perf)(\([^)]*\))?:'; then
+              [[ -z "$bump" ]] && bump="patch"
+            fi
+          }
+
+          # Unreleased commits already on main since the last tag.
+          if [[ -n "$last_tag" ]]; then
+            mapfile -t main_shas < <(git log --format='%H' "^${last_tag}" origin/main)
+          else
+            mapfile -t main_shas < <(git log --format='%H' origin/main)
+          fi
+
+          for sha in "${main_shas[@]}"; do
+            analyze_conventional "$(git show -s --format='%s' "$sha")" "$(git show -s --format='%B' "$sha")"
+            [[ "$bump" == "major" ]] && break
+          done
+
+          # The PR title is what the squash-merge commit message will be.
+          analyze_conventional "$PR_TITLE" "$PR_BODY"
+
+          if [[ -n "$bump" ]]; then
+            case "$bump" in
+              major) next_major=$((base_major+1)); next_minor=0; next_patch=0 ;;
+              minor) next_major=$base_major; next_minor=$((base_minor+1)); next_patch=0 ;;
+              patch) next_major=$base_major; next_minor=$base_minor; next_patch=$((base_patch+1)) ;;
+            esac
+            expected_version="${next_major}.${next_minor}.${next_patch}"
+            will_release="true"
+          else
+            expected_version=""
+            will_release="false"
+          fi
+
+          echo "expected_version=$expected_version" >>"$GITHUB_OUTPUT"
+          echo "expected_app_version=v${expected_version}" >>"$GITHUB_OUTPUT"
+          echo "will_release=$will_release" >>"$GITHUB_OUTPUT"
+          echo "last_tag=$last_tag" >>"$GITHUB_OUTPUT"
+
+      - name: Check chart versions
+        id: version
+        run: |
+          set -eou pipefail
+
+          cd pr
+          git fetch origin main
+          mapfile -t changed_charts < <(git diff --name-only origin/main | grep -oE '^charts/([^/]+)' | sed 's/charts\///' | sort -u)
+          cd ..
+
+          expected_version="${{ steps.expected.outputs.expected_version }}"
+          expected_app_version="${{ steps.expected.outputs.expected_app_version }}"
+          will_release="${{ steps.expected.outputs.will_release }}"
+
+          pending=0
+          touch pending.md
+
+          echo '| Chart | Field | `main` | `HEAD` | Expected |' >>pending.md
+          echo '| --- | --- | --- | --- | --- |' >>pending.md
+
+          for chart in "${changed_charts[@]}"; do
+            # This is a deleted chart. Any version is valid.
+            if [[ ! -d "pr/charts/$chart" ]]; then
+              echo "| $chart | version | N/A | N/A | N/A |" >>pending.md
+              echo "| $chart | appVersion | N/A | N/A | N/A |" >>pending.md
+              continue
+            fi
+
+            pr_version=$(grep -oP '^version: \K[^\n]+' pr/charts/$chart/Chart.yaml | tr -d '\n')
+            pr_appversion=$(grep -oP '^appVersion: "\K[^"]+' pr/charts/$chart/Chart.yaml | tr -d '\n')
+
+            # This is a new chart. Any version is valid.
+            if [[ ! -d "main/charts/$chart" ]]; then
+              main_version="N/A"
+              main_appversion="N/A"
+            else
+              main_version=$(grep -oP '^version: \K[^\n]+' main/charts/$chart/Chart.yaml | tr -d '\n')
+              main_appversion=$(grep -oP '^appVersion: "\K[^"]+' main/charts/$chart/Chart.yaml | tr -d '\n')
+            fi
+
+            # No release would be produced by these commits, so there is no
+            # next version to align the chart with.
+            if [[ "$will_release" != "true" ]]; then
+              echo "| $chart | version | $main_version | $pr_version | no release triggered |" >>pending.md
+              echo "| $chart | appVersion | $main_appversion | $pr_appversion | no release triggered |" >>pending.md
+              pending=$((pending + 2))
+              continue
+            fi
+
+            if [[ "$pr_version" == "$expected_version" ]]; then
+              echo "| $chart | version | $main_version | $pr_version | $expected_version |" >>pending.md
+            else
+              echo "| $chart | version | $main_version | $pr_version | $expected_version |" >>pending.md
+              pending=$((pending + 1))
+            fi
+
+            if [[ "$pr_appversion" == "$expected_app_version" ]]; then
+              echo "| $chart | appVersion | $main_appversion | $pr_appversion | $expected_app_version |" >>pending.md
+            else
+              echo "| $chart | appVersion | $main_appversion | $pr_appversion | $expected_app_version |" >>pending.md
+              pending=$((pending + 1))
+            fi
+          done
+
+          echo "pending=$pending" >>"$GITHUB_OUTPUT"
+
+          {
+            echo 'log<<EOF'
+            cat pending.md
+            echo EOF
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Find version check comment
+        uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4.0.0
+        id: find-version
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "Chart version check"
+
+      - name: Publish version check
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        if: steps.version.outputs.pending != '0'
+        with:
+          comment-id: ${{ steps.find-version.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## 📦 Chart version check
+
+            When a chart is changed, its `version` and `appVersion` in `Chart.yaml` must match the next semantic release version computed from the PR title (`feat` → minor, `fix`/`perf` → patch, `BREAKING CHANGE` → major).
+
+            Last release: `${{ steps.expected.outputs.last_tag }}`
+
+            ${{ steps.version.outputs.log }}
+          edit-mode: replace
+
+      - name: Delete version check comment
+        if: steps.version.outputs.pending == '0' && steps.find-version.outputs.comment-id != ''
+        run: gh api /repos/${{ github.repository }}/issues/comments/${{ steps.find-version.outputs.comment-id }} -X DELETE
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lint charts
+        id: lint
+        run: |
+          set -eou pipefail
+
+          cd pr
+
+          mapfile -t charts < <(find charts -mindepth 1 -maxdepth 1 -type d)
+
+          cd ..
+
+          for chart in "${charts[@]}"; do
+            [[ ! -f "pr/$chart/Chart.lock" ]] && helm dependency build pr/$chart
+          done
+
+          if output=$(helm lint pr/charts/* --strict); then
+            echo 'result=0' >>"$GITHUB_OUTPUT"
+          else
+            echo 'result=1' >>"$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo 'log<<EOF'
+            echo "$output"
+            echo EOF
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Find lint comment
+        uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4.0.0
+        id: find-lint
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "Helm linting"
+
+      - name: Publish lint results
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        if: steps.lint.outputs.result != '0'
+        with:
+          comment-id: ${{ steps.find-lint.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## ☸️ Helm linting
+
+            <details>
+            <summary><code>helm lint charts/* --strict</code></summary>
+
+            ```txt
+            ${{ steps.lint.outputs.log }}
+            ```
+
+            </details>
+          edit-mode: replace
+
+      - name: Delete lint comment
+        if: steps.lint.outputs.result == '0' && steps.find-lint.outputs.comment-id != ''
+        run: gh api /repos/${{ github.repository }}/issues/comments/${{ steps.find-lint.outputs.comment-id }} -X DELETE
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fail on version mismatch
+        if: steps.version.outputs.pending != '0'
+        run: exit 1
+
+      - name: Fail on lint errors
+        if: steps.lint.outputs.result != '0'
+        run: exit 1
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - build
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download binaries
+        uses: actions/download-artifact@v6
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Create release
+        uses: cycjimmy/semantic-release-action@b12c8f6015dc215fe37bc154d4ad456dd3833c90 # v6.0.0
+        with:
+          semantic_version: 22
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-container-image:
+    name: Release Container image
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - release
+    permissions:
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Free disk space
+        shell: bash
+        run: |
+          # Optional step, but useful to avoid disk space issues on GitHub runners
+          # Default runners guarantee 10 GB of free space
+          sudo swapoff -a
+          sudo rm -f /swapfile
+          sudo rm -rf /usr/local/lib/android >/dev/null 2>&1
+          docker system prune -af
+          df -h
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+        # We get the version from the git tag and not from the semantic-release output,
+        # because if the pipeline fails after a release is created,
+        # on rerun, semantic-release output will be null but we still want build and push a new docker image.
+      - name: Extract version from tag
+        id: extract_version
+        run: |
+          #!/bin/bash
+
+          git fetch --tags --force
+
+          TAGS=$(git tag --points-at HEAD)
+
+          # Filter tags matching semantic version pattern
+          SEMVER_TAG=$(echo "$TAGS" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+
+          if [ -z "$SEMVER_TAG" ]; then
+              echo "No semantic version tag found for this commit."
+              exit 1
+          else
+              echo "Found semantic version tag: $SEMVER_TAG"
+              echo "version=${SEMVER_TAG}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.180
+        with:
+          context: .
+          file: Containerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION="${{ steps.extract_version.outputs.version }}"
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ steps.extract_version.outputs.version }}
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+  publish-charts:
+    name: Publish charts
+    runs-on: ubuntu-latest
+    needs:
+      - test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: Setup Helm
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+
+      - name: Setup ORAS
+        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
+
+      - name: Publish charts
+        run: |
+          set -eou pipefail
+
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username ${{ github.actor }} --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io --username ${{ github.actor }} --password-stdin
+
+          mapfile -t changed_charts < <(git diff --name-only HEAD~1 | grep -oP 'charts/\K[^/]+' | sort -u)
+
+          for chart in "${changed_charts[@]}"; do
+            # If the chart was deleted, skip it.
+            if [[ ! -d "charts/$chart" ]]; then
+              echo "Skipping deleted chart: $chart"
+              continue
+            fi
+
+            [[ ! -f "charts/$chart/Chart.lock" ]] && helm dependency build "charts/$chart"
+            helm package "charts/$chart"
+            helm push $chart-*.tgz oci://ghcr.io/kommodity-io/charts
+            if [[ -f "charts/$chart/artifacthub-repo.yml" ]]; then
+              oras push \
+                "ghcr.io/kommodity-io/charts/$chart:artifacthub.io" \
+                --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+                "charts/$chart/artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml"
+            fi
+          done
