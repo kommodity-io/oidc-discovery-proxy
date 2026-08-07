@@ -10,7 +10,9 @@ metadata:
     app.kubernetes.io/version: {{ include "oidc-discovery-proxy.version" . }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
 spec:
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicas }}
+  {{- end }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
