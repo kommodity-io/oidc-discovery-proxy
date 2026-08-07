@@ -1,13 +1,18 @@
+{{- $autoscaling := .Values.autoscaling.enabled -}}
+{{- $multipleReplicas := gt (int .Values.replicas) 1 -}}
+{{- $multipleMinReplicas := gt (int .Values.autoscaling.minReplicas) 1 -}}
+{{- $pdbNeeded := or (and (not $autoscaling) $multipleReplicas) (and $autoscaling $multipleMinReplicas) -}}
+{{- if $pdbNeeded }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ .Chart.Name }}
+  name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ .Chart.Name }}
     app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/version: {{ .Chart.AppVersion | default .Chart.Version }}
+    app.kubernetes.io/version: {{ include "oidc-discovery-proxy.version" . }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
 spec:
   maxUnavailable: 50%
@@ -15,3 +20,4 @@ spec:
     matchLabels:
       app.kubernetes.io/name: {{ .Chart.Name }}
       app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

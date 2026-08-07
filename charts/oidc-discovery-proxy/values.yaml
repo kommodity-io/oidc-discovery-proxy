@@ -21,19 +21,26 @@ host:
 
 image:
   repository: ghcr.io/kommodity-io/oidc-discovery-proxy
-  tag: v1.2.2
+  # Image tag. Defaults to the chart's appVersion if omitted.
+  tag: ~
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
 
 replicas: 2
 
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 100
+  targetMemoryUtilizationPercentage: 90
+
 resources:
   requests:
     cpu: 50m
-    memory: 32Mi
+    memory: 64Mi
   limits:
-    cpu: 200m
     memory: 64Mi
 
 podLabels: {}
